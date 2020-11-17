@@ -1,6 +1,6 @@
 // @refresh reset
 import { StatusBar } from "expo-status-bar";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   StyleSheet,
   Text,
@@ -9,6 +9,7 @@ import {
   TextInput,
   Button,
 } from "react-native";
+import { GiftedChat } from "react-native-gifted-chat";
 import AsyncStorage from "@react-native-community/async-storage";
 import * as firebase from "firebase";
 import "firebase/firestore";
@@ -31,9 +32,13 @@ if (firebase.apps.length === 0) {
 
 LogBox.ignoreLogs(["Setting a timer for a long period of time"]);
 
+const db = firebase.firestore();
+const chatsRef = db.collection("chats");
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [name, setName] = useState("");
+  const [messages, setMessages] = useState([]);
 
   const readUserFunction = async () => {
     const user = await AsyncStorage.getItem("user");
@@ -52,8 +57,34 @@ export default function App() {
     setUser(user);
   };
 
+  const sendMessageHandler = async (messages) => {
+    const writes = messages.map((message) => chatsRef.add(message));
+    await Promise.all(writes);
+  };
+
+  const appendMessages = useCallback(
+    (messages) => {
+      setMessages((previousMessages) =>
+        GiftedChat.append(previousMessages, messages)
+      );
+    },
+    [messages]
+  );
+
   useEffect(() => {
     readUserFunction();
+    const unsubscribe = chatsRef.onSnapshot((querySnapshot) => {
+      const messageFirestore = querySnapshot
+        .docChanges()
+        .filter(({ type }) => type === "added")
+        .map(({ doc }) => {
+          const message = doc.data();
+          return { ...message, createdAt: message.createdAt.toDate() };
+        })
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      appendMessages(messageFirestore);
+    });
+    return () => unsubscribe();
   }, []);
 
   if (!user) {
@@ -71,10 +102,7 @@ export default function App() {
   }
 
   return (
-    <View style={styles.startingScreen}>
-      <Text>Welcome {user.name}</Text>
-      <StatusBar style="auto" />
-    </View>
+    <GiftedChat messages={messages} user={user} onSend={sendMessageHandler} />
   );
 }
 
